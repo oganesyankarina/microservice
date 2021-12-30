@@ -1,0 +1,89 @@
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: prometheus
+spec:
+  serviceName: prometheus
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      serviceAccount: prometheus
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: prometheus-k8s
+          image: prometheus:3.7-management
+          env:
+            - name: MY_POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: PROMETHEUS_USE_LONGNAME
+              value: "true"
+            - name: PROMETHEUS_NODENAME
+              value: "prometheus@$(MY_POD_IP)"
+            - name: K8S_SERVICE_NAME
+              value: "PROMETHEUS"
+            - name: PROMETHEUS_ERLANG_COOKIE
+              value: "mycookie"
+          ports:
+            - name: amqp
+              protocol: TCP
+              containerPort: 9090
+            - name: admin
+              protocol: TCP
+              containerPort: 19090
+          livenessProbe:
+            exec:
+              command: ["prometheusctl", "status"]
+            initialDelaySeconds: 60
+            periodSeconds: 60
+            timeoutSeconds: 15
+          readinessProbe:
+            exec:
+              command: ["prometheusctl", "status"]
+            initialDelaySeconds: 20
+            periodSeconds: 60
+            timeoutSeconds: 10
+          imagePullPolicy: Always
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/prometheus
+            - name: data
+              mountPath: /var/lib/prometheus
+      volumes:
+        - name: config-volume
+          configMap:
+            name: prometheus-config
+            items:
+              - key: prometheus.conf
+                path: prometheus.conf
+              - key: enabled_plugins
+                path: enabled_plugins
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - prometheus
+                topologyKey: kubernetes.io/hostname
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
+        storageClassName: csi-ceph-hdd-dp1
